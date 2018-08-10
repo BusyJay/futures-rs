@@ -39,11 +39,11 @@
 
 extern crate futures;
 extern crate num_cpus;
+extern crate crossbeam_channel;
 
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc;
 use std::thread;
 use std::fmt;
 
@@ -96,8 +96,8 @@ trait AssertSendSync: Send + Sync {}
 impl AssertSendSync for CpuPool {}
 
 struct Inner {
-    tx: Mutex<mpsc::Sender<Message>>,
-    rx: Mutex<mpsc::Receiver<Message>>,
+    tx: crossbeam_channel::Sender<Message>,
+    rx: crossbeam_channel::Receiver<Message>,
     cnt: AtomicUsize,
     size: usize,
 }
@@ -246,13 +246,13 @@ impl<F> Executor<F> for CpuPool
 
 impl Inner {
     fn send(&self, msg: Message) {
-        self.tx.lock().unwrap().send(msg).unwrap();
+        self.tx.send(msg)
     }
 
     fn work(&self, after_start: Option<Arc<Fn() + Send + Sync>>, before_stop: Option<Arc<Fn() + Send + Sync>>) {
         after_start.map(|fun| fun());
         loop {
-            let msg = self.rx.lock().unwrap().recv().unwrap();
+            let msg = self.rx.recv().unwrap();
             match msg {
                 Message::Run(r) => r.run(),
                 Message::Close => break,
@@ -402,11 +402,11 @@ impl Builder {
     ///
     /// Panics if `pool_size == 0`.
     pub fn create(&mut self) -> CpuPool {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = crossbeam_channel::unbounded();
         let pool = CpuPool {
             inner: Arc::new(Inner {
-                tx: Mutex::new(tx),
-                rx: Mutex::new(rx),
+                tx,
+                rx,
                 cnt: AtomicUsize::new(1),
                 size: self.pool_size,
             }),
